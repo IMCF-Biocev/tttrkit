@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: tttrkit
+Version: 0.1.0
+Summary: Streaming reader and decoder for PicoQuant TTTR files
+Author: Dalibor Panek
+Requires-Dist: numpy

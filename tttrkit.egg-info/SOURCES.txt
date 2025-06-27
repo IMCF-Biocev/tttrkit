@@ -1,0 +1,12 @@
+pyproject.toml
+ptuio/decoder.py
+ptuio/file.py
+ptuio/marker.py
+ptuio/reader.py
+ptuio/reconstructor.py
+test/test_file.py
+tttrkit.egg-info/PKG-INFO
+tttrkit.egg-info/SOURCES.txt
+tttrkit.egg-info/dependency_links.txt
+tttrkit.egg-info/requires.txt
+tttrkit.egg-info/top_level.txt

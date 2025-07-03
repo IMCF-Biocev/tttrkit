@@ -288,3 +288,4 @@ def get_marker_distribution(events: np.ndarray) -> Dict[int, int]:
     markers = events['channel'][mask]
     unique, counts = np.unique(markers, return_counts=True)
     return dict(zip(unique.tolist(), counts.tolist()))
+

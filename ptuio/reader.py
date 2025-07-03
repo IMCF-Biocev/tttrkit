@@ -18,7 +18,7 @@ class TTTRReader:
             f.seek(self.offset)
             return np.fromfile(f, dtype=self.dtype, count=count)
 
-    def iter_chunks(self, chunk_size=2000000):
+    def iter_chunks(self, chunk_size=1000000):
         with open(self.path, 'rb') as f:
             f.seek(self.offset)
             while True:

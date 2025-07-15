@@ -37,13 +37,13 @@ class TTTRType(IntEnum):
 
 def decode_t3(records):
     out = np.empty(records.shape[0], dtype=[
-        ('nsync', np.uint64),
+        ('nsync', np.uint32),
         ('dtime', np.uint16),
         ('channel', np.uint8),
         ('special', np.uint8),
     ])
 
-    out['nsync'] = (records & 0x3ff).astype(np.uint64) # first 10 bits
+    out['nsync'] = (records & 0x3ff).astype(np.uint32) # first 10 bits
     out['dtime'] = ((records >> 10) & 0x7fff).astype(np.uint16) # next 15 bits
     out['channel'] = ((records >> 25) & 0x3f).astype(np.uint8) # next 6 bits
     out['special'] = ((records >> 31) & 0x1).astype(np.uint8) # last one bit

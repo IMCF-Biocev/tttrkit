@@ -1,3 +1,7 @@
 .venv/
 .conda/
 .pytest_cache/
+build/
+dist/
+*.egg-info/
+*.egg

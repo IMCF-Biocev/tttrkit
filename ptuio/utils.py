@@ -65,7 +65,7 @@ def estimate_tcspc_bins(header_tags: dict, buffer: int = 10) -> int:
 
 def estimate_bidirectional_shift(reader: TTTRReader, 
                                  config: ScanConfig,
-                                 roi: Optional[np.ndarray] = None, 
+                                 roi_mask: Optional[np.ndarray] = None, 
                                  wrap: int = 1024,
                                  max_shift: float = .01, 
                                  steps: int = 11, 
@@ -102,10 +102,10 @@ def estimate_bidirectional_shift(reader: TTTRReader,
 
     line_bin = config.line_accumulations[0] * 2
 
-    if roi is None:
+    if roi_mask is None:
         stretched_roi = None
     else:
-        stretched_roi = ImageReconstructor(config=config)._stretch_roi_mask(roi)[0]
+        stretched_roi = ImageReconstructor(config=config)._stretch_roi_mask(roi_mask)[0]
         row_mask = np.any(stretched_roi, axis=1)
         stretched_roi = np.broadcast_to(row_mask[:, None], stretched_roi.shape)
 
@@ -124,7 +124,7 @@ def estimate_bidirectional_shift(reader: TTTRReader,
         
         recon = ImageReconstructor(config=test_config,roi_mask=stretched_roi)
 
-        if roi is None:
+        if roi_mask is None:
             chunk = reader.read(count=500_000)
             corrected_chunk = corrector.correct(chunk)
             recon.update(corrected_chunk)

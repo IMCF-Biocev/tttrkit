@@ -65,11 +65,11 @@ def estimate_tcspc_bins(header_tags: dict, buffer: int = 10) -> int:
 
 def estimate_bidirectional_shift(reader: TTTRReader, 
                                  config: ScanConfig,
-                                 roi_mask: Optional[np.ndarray] = None, 
                                  wrap: int = 1024,
                                  max_shift: float = .01, 
-                                 steps: int = 11, 
-                                 verbose: bool = True) -> float:
+                                 steps: int = 11,
+                                 chunk_length: int = 500_000, 
+                                 verbose: bool = True) -> tuple[float, np.ndarray]:
     """
     Estimate the optimal phase shift (as fraction of line duration) for backward lines 
     in bidirectional scanning.
@@ -77,13 +77,13 @@ def estimate_bidirectional_shift(reader: TTTRReader,
     Args:
         reader: TTTRReader instance
         config: A ScanConfig instance.
-        roi: 2D numpy array. If given, first frame is reconstructed (takes longer). If none is given, just one chunk is read for reconstruction
         max_shift: Maximum shift to try (±max_shift).
         steps: Number of shift steps to test.
+        chunk_length: Number of events to read. Try increasing it when reconstruction fails, perhaps the reconstruction is feature-less
         verbose: Whether to print progress.
 
     Returns:
-        Best phase shift (float) in units of line duration (e.g., -0.015).
+        Tuple of best phase shift (float) in units of line duration (e.g., -0.015) and numpy array of shifts, correlation scores, and fit for inspection.
     """
     
     
@@ -102,53 +102,37 @@ def estimate_bidirectional_shift(reader: TTTRReader,
 
     line_bin = config.line_accumulations[0] * 2
 
-    if roi_mask is None:
-        stretched_roi = None
-    else:
-        stretched_roi = ImageReconstructor(config=config)._stretch_roi_mask(roi_mask)[0]
-        row_mask = np.any(stretched_roi, axis=1)
-        stretched_roi = np.broadcast_to(row_mask[:, None], stretched_roi.shape)
-
-
     shifts = np.linspace(config.bidirectional_phase_shift-max_shift,
                          config.bidirectional_phase_shift+max_shift, steps)
     scores = np.zeros_like(shifts)
     corrector = T3OverflowCorrector(wraparound=wrap)
-    
     
     for i, shift in enumerate(shifts):
         
         # Clone config and apply shift
         test_config = copy.deepcopy(base_config)
         test_config.bidirectional_phase_shift = shift
-        
-        recon = ImageReconstructor(config=test_config,roi_mask=stretched_roi)
+        recon = ImageReconstructor(config=test_config,outputs=["photon_count"])
+        chunk = reader.read(count=chunk_length)
+        corrected_chunk = corrector.correct(chunk)
+        recon.update(corrected_chunk)
+        pc = xr.DataArray(
+            data=recon.photon_count.astype(np.float32),
+            coords={
+                "frame" : np.arange(test_config.frames),
+                "line": np.arange(test_config.lines),
+                "pixel": np.arange(test_config.pixels),
+                "channel": np.arange(max(recon.active_channels)+1)
+            }
+        )
 
-        if roi_mask is None:
-            chunk = reader.read(count=500_000)
-            corrected_chunk = corrector.correct(chunk)
-            recon.update(corrected_chunk)
-            pc = xr.DataArray(recon.photon_count.astype(np.float32))
-            pc = pc.rename({"dim_0" : "frame",
-                "dim_1" : "line",
-                "dim_2" : "pixel",
-                "dim_3" : "channel"})
-        else:
-            for chunk in reader.iter_chunks():
-                if recon._finished:
-                    break
-                corrected_chunk = corrector.correct(chunk)
-                recon.update(corrected_chunk)
-         # Reconstruct
-            result = recon.finalize()
-            pc = result.photon_count
-            pc = pc.sum(dim = 'sequence')
 
-        
-
-        # pc = pc.transpose('frame', 'sequence', 'channel', 'line', 'pixel')
+        # pc = xr.DataArray(recon.photon_count.astype(np.float32))
+        # pc = pc.rename({"dim_0" : "frame",
+        #     "dim_1" : "line",
+        #     "dim_2" : "pixel",
+        #     "dim_3" : "channel"})
         pc = pc.sum(dim = 'channel')
-        # pc = pc.isel(frame=0, sequence=0)
         pc = pc.isel(frame = 0)
         forward = pc[::2, :]
         backward = pc[1::2, :]
@@ -189,9 +173,6 @@ def estimate_bidirectional_shift(reader: TTTRReader,
 
     return best_shift, np.stack((shifts,scores,fit))
 
-
-
-
 def gaussian(x, a, mu, sigma, c):
     return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2) + c
 
@@ -206,15 +187,11 @@ def fit_gaussian_peak(shifts: np.ndarray, scores: np.ndarray) -> Optional[float]
         return None
 
 
-# --- Optional Helpers ---
+# --- Marker Helpers ---
 
 def marker_events(events: np.ndarray) -> np.ndarray:
     """Return only events where channel == 63 and special != 15 (non-overflow markers)."""
     return events[(events['channel'] < 63) & (events['special'] != 0)]
-
-def overflow_events(events: np.ndarray) -> np.ndarray:
-    """Return overflow marker events."""
-    return events[(events['channel'] == 63) & (events['special'] != 0)]
 
 def get_marker_distribution(events: np.ndarray) -> Dict[int, int]:
     """Returns a count of each special marker code."""

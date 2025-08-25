@@ -1,11 +1,8 @@
 import numpy as np
 from dataclasses import dataclass
-from .decoder import T3OverflowCorrector
 from typing import Union, Tuple, Optional, Literal, Sequence
 import xarray as xr
-import copy
-import time
-from enum import Enum
+from .decoder import event_dtype, empty_events, get_photons, get_markers
 
 
 @dataclass
@@ -15,6 +12,14 @@ class LineSegment:
     frame_idx: int
     line_idx: int
     reversed: bool
+
+seg_dtype =[
+        ("start_nsync", "i8"),
+        ("stop_nsync", "i8"),
+        ("frame_idx", "i4"),
+        ("line_idx", "i4"),
+        ("reversed", "?"),
+    ]
 
 AVAILABLE_OUTPUTS = [
     "photon_count",
@@ -178,7 +183,7 @@ class ImageReconstructor:
                 self.partial_line_marker = None   # stores unmatched marker from previous chunk
                 self.current_line_idx = 0
                 self.current_frame_idx = 0               # current frame index
-                self._pending_photons = np.empty((0,), dtype=np.ndarray)  # same dtype as events
+                self._pending_photons = empty_events()
                 self._frame_marker_nsyncs = np.empty((0,), dtype=np.ndarray)
                 self._start_marker_nsyncs = np.empty((0,), dtype=np.ndarray)
                 self._stop_marker_nsyncs = np.empty((0,), dtype=np.ndarray)
@@ -235,7 +240,13 @@ class ImageReconstructor:
  
     def _build_line_segments(self, frame_markers: np.ndarray, start_markers: np.ndarray, stop_markers: np.ndarray = None) -> list[LineSegment]:
         if self._finished:
-            return []       
+            return []     
+        for arr in (frame_markers, start_markers):
+            if arr is not None and arr.dtype != event_dtype:
+                raise TypeError(f"Expected markers with dtype {event_dtype}, got {arr.dtype}")
+        if stop_markers is not None and stop_markers.dtype != event_dtype:
+            raise TypeError(f"Expected markers with dtype {event_dtype}, got {stop_markers.dtype}")  
+        
         frame_nsyncs = frame_markers["nsync"]
         start_nsyncs = start_markers["nsync"]
         stop_nsyncs = stop_markers["nsync"] # only used to calculate stop phase and line duration
@@ -273,7 +284,7 @@ class ImageReconstructor:
 
             reversed_line = self.config.bidirectional and (self.current_line_idx % 2 == 1)
 
-            start = start_nsyncs[i]
+            start = int(start_nsyncs[i])
             stop = start + self.line_duration
 
             if reversed_line:
@@ -283,8 +294,6 @@ class ImageReconstructor:
                 stop += shift
 
             segments.append(LineSegment(
-                # start_nsync = start_nsyncs[i],
-                # stop_nsync = start_nsyncs[i] + self.line_duration,
                 start_nsync = start,
                 stop_nsync = stop,
                 frame_idx = self.current_frame_idx,
@@ -298,54 +307,166 @@ class ImageReconstructor:
             self.partial_line_marker = start_nsyncs[-1] 
         self._frame_marker_nsyncs = self._frame_marker_nsyncs[:-1]
         return segments
-    
+        
+    def _build_line_segments_vec(
+        self,
+        frame_markers: np.ndarray,
+        start_markers: np.ndarray,
+    ) -> np.ndarray:
+        # seg_dtype =[
+        #         ("start_nsync", "i8"),
+        #         ("stop_nsync", "i8"),
+        #         ("frame_idx", "i4"),
+        #         ("line_idx", "i4"),
+        #         ("reversed", "?"),
+        #     ]
+
+        if self._finished:
+            return np.empty(0, dtype=seg_dtype)
+
+        frame_nsyncs = frame_markers["nsync"]
+        start_nsyncs = start_markers["nsync"]
+
+        self._frame_marker_nsyncs = np.append(self._frame_marker_nsyncs, frame_nsyncs, axis=0)
+        # self._frame_marker_nsyncs = np.append(self._frame_marker_nsyncs, (np.inf,), axis=0)
+        # self._start_marker_nsyncs = np.append(self._start_marker_nsyncs, start_nsyncs, axis=0)
+
+        if self.partial_line_marker is not None:
+            start_nsyncs = np.insert(start_nsyncs, 0, self.partial_line_marker)
+            self.partial_line_marker = None
+            
+        self.partial_line_marker = start_nsyncs[-1]
+        # n = len(start_nsyncs) - 1
+
+        start = start_nsyncs[:-1].astype(np.int64)
+        # start = start_nsyncs.astype(np.int64)
+        stop = start + self.line_duration
+
+        if len(start) == 0: 
+            return np.empty(0,dtype=seg_dtype)
+
+        # Assign frames vectorized
+        frame_idx = np.searchsorted(self._frame_marker_nsyncs, start, side="right") - 1
+        # line_idx = np.searchsorted(self._start_marker_nsyncs, start, side="right") - 1
+        
+        # Clip to requested frame count
+        valid = frame_idx < self.config.frames
+        if not np.any(valid):
+            self._finished = True
+            return np.empty(0,dtype=seg_dtype)
+        
+        start = start[valid]
+        stop = stop[valid]
+        frame_idx = frame_idx[valid]
+
+        # Line indices are just sequential counters per frame -- NOT TRUE?
+        # If bidirectional: even=forward, odd=reversed
+        # line_idx = np.arange(len(frame_idx), dtype=np.int32)
+        _ , inverse, counts = np.unique(frame_idx, return_inverse=True, return_counts=True)
+        cumsum = np.cumsum(np.r_[0,counts[:-1]])
+        line_idx = np.arange(len(frame_idx)) - cumsum[inverse]  
+
+        if frame_idx[0] == self.current_frame_idx:
+            line_idx[frame_idx == self.current_frame_idx] += self.current_line_idx
+
+        self.current_frame_idx = frame_idx[-1]
+        self.current_line_idx = line_idx[-1] + 1
+
+        reversed_mask = self.config.bidirectional & (line_idx % 2 == 1)
+
+        # if self.config.bidirectional:
+        #     intervals = start_nsyncs[1:] - start_nsyncs[:-1]
+        #     shifts = (self.config.bidirectional_phase_shift * intervals).astype(int)
+        #     shifts = shifts[valid]
+        #     start[reversed_mask] += shifts[reversed_mask]
+        #     stop[reversed_mask] += shifts[reversed_mask]
+
+        if self.config.bidirectional:
+            shift = int(self.config.bidirectional_phase_shift * self.line_duration)
+            start[reversed_mask] += shift
+            stop[reversed_mask] += shift
+
+
+
+        result = np.empty(len(start), dtype=seg_dtype)
+        result["start_nsync"] = start
+        result["stop_nsync"] = stop
+        result["frame_idx"] = frame_idx
+        result["line_idx"] = line_idx
+        result["reversed"] = reversed_mask
+
+        if not len(result):
+            self._finished = True
+
+        return result
  
 
     def update(self, events: np.ndarray):
         if self._finished:
             return
+        
+        if events.dtype != event_dtype:
+            raise TypeError(f"Expected events with dtype {event_dtype}, got {events.dtype}")
 
         # Filter non-marker photons
         if len(self._pending_photons) > 0:
             events = np.concatenate([self._pending_photons, events])
             self._pending_photons = np.empty((0,), dtype=events.dtype)
-        photon_mask = (events["channel"] < 63) & (events["special"] == 0)
-        photons = events[photon_mask]
 
-        
+        photons = get_photons(events)
+
         # Extract frame markers
-        frame_markers = self._extract_markers(events, self.config.frame_start_marker)
+        # frame_markers = self._extract_markers(events, self.config.frame_start_marker)
+        frame_markers = get_markers(events, self.config.frame_start_marker)
 
         # Extract line markers
-        start_markers = self._extract_markers(events, self.config.line_start_marker)
+        # start_markers = self._extract_markers(events, self.config.line_start_marker)
+        # stop_markers = (
+        #     self._extract_markers(events, self.config.line_stop_marker)
+        #     if self.config.line_stop_marker else None
+        # )
+        start_markers = get_markers(events, self.config.line_start_marker)
         stop_markers = (
-            self._extract_markers(events, self.config.line_stop_marker)
+            get_markers(events, self.config.line_stop_marker)
             if self.config.line_stop_marker else None
         )
 
         # Step 3: Build line segments from markers
-        line_segments = self._build_line_segments(frame_markers, start_markers, stop_markers)
+        # line_segments = self._build_line_segments(frame_markers, start_markers, stop_markers)
+        
+        if not self._stop_phase_computed:
+            self.compute_stop_phase(start_markers['nsync'], stop_markers['nsync'])
+
+
+
+        line_segments = self._build_line_segments_vec(frame_markers,start_markers)
 
         self._assign_photons_to_segments(photons, line_segments)
 
 
-    def _assign_photons_to_segments(self, photons: np.ndarray, segments: list) -> None:
+    def _assign_photons_to_segments(self, photons: np.ndarray, segments: np.ndarray) -> None:
         if len(segments) == 0 or photons.size == 0:
             return
+        
+        
+        if photons.dtype != event_dtype:
+            raise TypeError(f"Expected events with dtype {event_dtype}, got {photons.dtype}")
+
 
         # Step 1: Segment edges based on start_nsync + line duration
-        segment_starts = np.array([s.start_nsync for s in segments])
-        segment_ends = np.array([s.stop_nsync for s in segments])
+        # segment_starts = np.array([s.start_nsync for s in segments])
+        # segment_ends = np.array([s.stop_nsync for s in segments])
+        segment_starts = segments["start_nsync"]
+        segment_ends = segments["stop_nsync"]
         segment_index = np.searchsorted(segment_starts, photons["nsync"], side="right") - 1
 
 
 
-
         if photons['dtime'].max() >= self.tcspc_channels:
-            print("\033[91mTCSPC channel overflow detected! Check the entire decay by incresing tcspc_channels.\033[0m")
+            print(f"\033[91mTCSPC channel overflow detected! Max channel: {photons['dtime'].max()}\033[0m")
 
         if photons['channel'].max() >= self.config.max_channels:
-            print(f"\033[91mPhotons detected in channel {photons['channel'].max()} discarded!\033[0m")
+            print(f"\033[91mChannel overflow detected! Max channel: {photons['channel'].max()} discarded!\033[0m")
 
 
         # Step 2: Filter photons that fall within valid segments
@@ -361,15 +482,19 @@ class ImageReconstructor:
         segment_index = segment_index[valid]
         photons_in_segments = photons[valid]
 
-        # Step 3: Extract segment metadata
-        segment_info = np.array(
-            [(s.frame_idx, s.line_idx, s.reversed) for s in segments],
-            dtype=[("frame", int), ("line", int), ("reversed", bool)]
-        )
+        frames = segments["frame_idx"][segment_index]
+        lines = segments["line_idx"][segment_index]
+        reversed_flags = segments["reversed"][segment_index]
 
-        frames = segment_info["frame"][segment_index]
-        lines = segment_info["line"][segment_index]
-        reversed_flags = segment_info["reversed"][segment_index]
+        # Step 3: Extract segment metadata
+        # segment_info = np.array(
+        #     [(s.frame_idx, s.line_idx, s.reversed) for s in segments],
+        #     dtype=[("frame", int), ("line", int), ("reversed", bool)]
+        # )
+
+        # frames = segment_info["frame"][segment_index]
+        # lines = segment_info["line"][segment_index]
+        # reversed_flags = segment_info["reversed"][segment_index]
 
         # Step 4: Calculate pixel indices
 
@@ -525,16 +650,30 @@ class ImageReconstructor:
         if self._finished:
             return
 
+        # seg_dtype =[
+        #         ("start_nsync", "i8"),
+        #         ("stop_nsync", "i8"),
+        #         ("frame_idx", "i4"),
+        #         ("line_idx", "i4"),
+        #         ("reversed", "?"),
+        #     ]
 
-        final_segment = LineSegment(
-            start_nsync= self.partial_line_marker,
-            stop_nsync= self.partial_line_marker + self.line_duration,
-            frame_idx=self.current_frame_idx,
-            line_idx=self.current_line_idx,
-            reversed=self.config.bidirectional and (self.current_line_idx % 2 == 1),
-        )
+        # final_segment = LineSegment(
+        #     start_nsync= self.partial_line_marker,
+        #     stop_nsync= self.partial_line_marker + self.line_duration,
+        #     frame_idx=self.current_frame_idx,
+        #     line_idx=self.current_line_idx,
+        #     reversed=self.config.bidirectional and (self.current_line_idx % 2 == 1),
+        # )
 
-        self._assign_photons_to_segments(self._pending_photons, [final_segment])
+        final_segment = np.empty(1,dtype=seg_dtype)
+        final_segment["start_nsync"] = self.partial_line_marker
+        final_segment["stop_nsync"] = self.partial_line_marker + self.line_duration
+        final_segment["frame_idx"] = self.current_frame_idx
+        final_segment["line_idx"] = self.current_line_idx
+        final_segment["reversed"] = self.config.bidirectional and (self.current_line_idx % 2 == 1),
+
+        self._assign_photons_to_segments(self._pending_photons, final_segment)
         self._pending_photons = np.empty((0,), dtype=self._pending_photons.dtype)
         self.partial_line_marker = None
 

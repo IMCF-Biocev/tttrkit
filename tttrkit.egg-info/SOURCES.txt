@@ -4,6 +4,8 @@ ptuio/file.py
 ptuio/marker.py
 ptuio/reader.py
 ptuio/reconstructor.py
+ptuio/utils.py
+test/test_dtype.py
 test/test_file.py
 tttrkit.egg-info/PKG-INFO
 tttrkit.egg-info/SOURCES.txt

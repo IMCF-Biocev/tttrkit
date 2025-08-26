@@ -98,7 +98,7 @@ def estimate_bidirectional_shift(reader: TTTRReader,
     base_config.frames = 1
     base_config.line_accumulations = (1,)
     base_config.lines = config.lines * config.line_accumulations[0]
-    base_config.total_accumulations = 1
+    base_config._total_accumulations = 1
 
     line_bin = config.line_accumulations[0] * 2
 
@@ -122,7 +122,7 @@ def estimate_bidirectional_shift(reader: TTTRReader,
                 "frame" : np.arange(test_config.frames),
                 "line": np.arange(test_config.lines),
                 "pixel": np.arange(test_config.pixels),
-                "channel": np.arange(max(recon.active_channels)+1)
+                "channel": np.arange(test_config.max_channels)
             }
         )
 
@@ -166,21 +166,21 @@ def estimate_bidirectional_shift(reader: TTTRReader,
 
     # best_shift = shifts[np.argmax(scores)]
 
-    best_shift, fit = fit_gaussian_peak(shifts, scores)
+    best_shift, fit = _fit_gaussian_peak(shifts, scores)
 
     if verbose:
         print(f"Best estimated shift: {best_shift:.5f}")
 
     return best_shift, np.stack((shifts,scores,fit))
 
-def gaussian(x, a, mu, sigma, c):
+def _gaussian(x, a, mu, sigma, c):
     return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2) + c
 
-def fit_gaussian_peak(shifts: np.ndarray, scores: np.ndarray) -> Optional[float]:
+def _fit_gaussian_peak(shifts: np.ndarray, scores: np.ndarray) -> Optional[float]:
     try:
         p0 = [scores.max() - scores.min(), shifts[np.argmax(scores)], 0.1* (shifts.max() - shifts.min()), scores.min()]
-        popt, _ = curve_fit(gaussian, shifts, scores, p0=p0)
-        fit = gaussian(shifts,*popt)
+        popt, _ = curve_fit(_gaussian, shifts, scores, p0=p0)
+        fit = _gaussian(shifts,*popt)
         return float(popt[1]), fit  # mu = estimated phase shift
         
     except RuntimeError:

@@ -239,7 +239,7 @@ class MarkerInterpreter:
         self.scan_config = scan_config
 
         self._role_to_codes = {
-            "frame_start": self.scan_config.frame_start_marker,
+            "frame_start": self.scan_config.frame_start_marker_channel,
         }
 
         # Invert for special → role lookup (optional, if needed for classify)

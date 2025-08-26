@@ -1,4 +1,3 @@
-# ptuio/decoder.py
 import numpy as np
 from enum import IntEnum
 
@@ -14,9 +13,6 @@ event_dtype = np.dtype([
     ("channel", np.uint8),
     ("special", np.uint8),
 ])
-
-def empty_events():
-    return np.empty((0,), dtype=event_dtype)
 
 def get_photons(events: np.ndarray):
     return events[(events["channel"] < 63) & (events["special"] == 0)]
@@ -51,7 +47,7 @@ class T3OverflowCorrector:
         overflow_correction = np.cumsum(is_overflow * decoded['nsync']) * self.wraparound
         overflow_total = overflow_correction + self.overflow_carry
 
-        # Apply correction to *all* events (including overflow lines, which you might later drop)
+        # Apply correction to *all* events
         decoded['nsync'] += overflow_total
 
         # Update carry for next chunk

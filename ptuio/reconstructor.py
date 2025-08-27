@@ -27,7 +27,7 @@ class ScanConfig:
         lines: int = 512,
         pixels: int = 512,
         frames: int = 1,
-        max_channels: int = 64,
+        max_detector: int = 64,
         line_accumulations: tuple = (1,), #  > 1 dimension means the scanning is sequential
         bidirectional: bool = False,
         bidirectional_phase_shift: float = 0.0,
@@ -38,7 +38,7 @@ class ScanConfig:
         self.lines = lines
         self.pixels = pixels
         self.frames = frames
-        self.max_channels = max_channels
+        self.max_detector = max_detector
         self.bidirectional_phase_shift = bidirectional_phase_shift
         
 
@@ -137,10 +137,10 @@ class ImageReconstructor:
                     config.frames,
                     config.lines * config._total_accumulations,
                     config.pixels,
-                    config.max_channels
+                    config.max_detector
                 )
                 self.omega = omega
-                self.active_channels = set()
+                self.active_detectors = set()
 
                 if outputs is None:
                     outputs = AVAILABLE_OUTPUTS.copy()
@@ -162,7 +162,7 @@ class ImageReconstructor:
                 if "phasor_sum" in self._required:
                     self.phasor_sum = np.zeros(self.shape, dtype=np.complex64)
                 if "tcspc_hist" in self._required:
-                    self.tcspc_hist = np.zeros((self.config.frames, self.config.max_channels, tcspc_channels), dtype=np.uint64)  # existing shape logic
+                    self.tcspc_hist = np.zeros((self.config.frames, self.config.max_detector, tcspc_channels), dtype=np.uint64)  # existing shape logic
 
                 # Rolling context
                 self._partial_line_marker = None   # stores unmatched marker from previous chunk
@@ -224,8 +224,8 @@ class ImageReconstructor:
             self._flush_final_line()
 
         data = {}
-        active_channels = sorted(self.active_channels)
-        channels = max(active_channels) + 1
+        active_detectors = sorted(self.active_detectors)
+        channels = max(active_detectors) + 1
 
         if "tcspc_histogram" in self.requested_outputs:
             self.tcspc_hist = self.tcspc_hist[:,:channels,:]
@@ -237,7 +237,7 @@ class ImageReconstructor:
                 len(self.config.line_accumulations),
                 self.config.lines,
                 self.config.pixels,
-                max(self.active_channels) + 1
+                max(self.active_detectors) + 1
             ))
 
             pattern = np.repeat(np.arange(len(self.config.line_accumulations)), self.config.line_accumulations)
@@ -262,8 +262,6 @@ class ImageReconstructor:
                 seq_line_idx = np.where(sequence_pattern == accu_idx)[0]
                 accum = self.config.line_accumulations[accu_idx]
                 for f in range(self.config.frames):
-                    # seq_photon_count = self.photon_count[f, seq_line_idx, :, :max(active_channels) + 1]
-                                    
                     summed_PC = self._reshape_and_sum(self.photon_count, f, seq_line_idx, lines, accum, pixels, channels)
                     photon_count[f, accu_idx, :, :, :] = summed_PC
                     if "arrival_sum" in self._required:
@@ -439,14 +437,14 @@ class ImageReconstructor:
         if photons['dtime'].max() >= self.tcspc_channels:
             print(f"\033[91mTCSPC channel overflow detected! Max channel: {photons['dtime'].max()}\033[0m")
 
-        if photons['channel'].max() >= self.config.max_channels:
+        if photons['channel'].max() >= self.config.max_detector:
             print(f"\033[91mChannel overflow detected! Max channel: {photons['channel'].max()}\033[0m")
 
         valid = ((segment_index >= 0) & 
                  (segment_index < len(segment_starts)) & 
                  (photons['nsync'] < segment_ends[segment_index]) & 
                  (photons['dtime'] < self.tcspc_channels) & 
-                 (photons['channel'] < self.config.max_channels))
+                 (photons['channel'] < self.config.max_detector))
 
         if np.count_nonzero(valid) == 0:
             return
@@ -497,7 +495,7 @@ class ImageReconstructor:
 
         pending_photons_mask = photons["nsync"] >= segment_ends[-1]            
         self._pending_photons = photons[pending_photons_mask]
-        self.active_channels.update(np.unique(channels))
+        self.active_detectors.update(np.unique(channels))
 
     def _reshape_and_sum(self, array, f_idx, line_indices, lines, accum, pixels, channels):
         sliced = array[f_idx, line_indices, :, :channels]

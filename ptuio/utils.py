@@ -122,7 +122,7 @@ def estimate_bidirectional_shift(reader: TTTRReader,
                 "frame" : np.arange(test_config.frames),
                 "line": np.arange(test_config.lines),
                 "pixel": np.arange(test_config.pixels),
-                "channel": np.arange(test_config.max_channels)
+                "channel": np.arange(test_config.max_detector)
             }
         )
 

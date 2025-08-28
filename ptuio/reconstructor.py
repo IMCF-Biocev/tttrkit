@@ -312,6 +312,8 @@ class ImageReconstructor:
         # Only keep relevant coords
         coords = {k: v for k, v in all_coords.items() if k in used_dims}
 
+        print("Reconstruction finished.")
+
         return xr.Dataset(data, coords=coords)
 
     def _resolve_dependencies(self):
@@ -435,10 +437,10 @@ class ImageReconstructor:
         segment_index = np.searchsorted(segment_starts, photons["nsync"], side="right") - 1
 
         if photons['dtime'].max() >= self.tcspc_channels:
-            print(f"\033[91mTCSPC channel overflow detected! Max channel: {photons['dtime'].max()}\033[0m")
+            print(f"\033[91mWarning: TCSPC channel overflow detected. Max channel: {photons['dtime'].max()}\033[0m")
 
         if photons['channel'].max() >= self.config.max_detector:
-            print(f"\033[91mChannel overflow detected! Max channel: {photons['channel'].max()}\033[0m")
+            print(f"\033[91mWarning: Channel overflow detected. Max channel: {photons['channel'].max()}\033[0m")
 
         valid = ((segment_index >= 0) & 
                  (segment_index < len(segment_starts)) & 

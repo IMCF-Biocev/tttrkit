@@ -7,3 +7,4 @@ dist/
 *.egg
 test/
 test/data/
+git_workflow_cheatsheet.md

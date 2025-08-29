@@ -238,7 +238,7 @@ class ImageReconstructor:
                 self.config.lines,
                 self.config.pixels,
                 max(self.active_detectors) + 1
-            ))
+            ), dtype = np.uint32)
 
             pattern = np.repeat(np.arange(len(self.config.line_accumulations)), self.config.line_accumulations)
 
@@ -251,10 +251,10 @@ class ImageReconstructor:
 
 
         if "arrival_sum" in self._required:
-            arrival_sum = np.zeros_like(photon_count)
+            arrival_sum = np.zeros_like(photon_count, dtype = np.float32)
 
         if "phasor_sum" in self._required:
-            phasor_sum = np.zeros_like(photon_count, dtype=np.complex64)
+            phasor_sum = np.zeros_like(photon_count, dtype = np.complex64)
 
         if "photon_count" in self._required:
 
@@ -276,7 +276,7 @@ class ImageReconstructor:
                     
         if "mean_arrival_time" in self.requested_outputs:
             with np.errstate(divide='ignore', invalid='ignore'):
-                mean_arrival = np.true_divide(arrival_sum, photon_count)
+                mean_arrival = np.true_divide(arrival_sum, photon_count, dtype=np.float32)
                 mean_arrival[photon_count == 0] = 0  # set empty pixels to 0
             data["mean_arrival_time"] = (("frame", "sequence", "line", "pixel", "channel"), mean_arrival)
         
@@ -285,7 +285,7 @@ class ImageReconstructor:
 
             # Normalize phasor
             with np.errstate(divide='ignore', invalid='ignore'):
-                norm_phasor = np.true_divide(phasor_sum, photon_count)
+                norm_phasor = np.true_divide(phasor_sum, photon_count, dtype=np.complex64)
                 # norm_phasor[photon_count == 0] = 0
                 norm_phasor[photon_count == 0] = np.nan + 1j * np.nan
 

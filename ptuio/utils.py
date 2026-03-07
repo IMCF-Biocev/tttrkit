@@ -277,7 +277,7 @@ def get_phasor_from_decay(
     return phasor
 
 
-def draw_unitary_circle(ax: Axes, sync_rate, tau_max: int = None, tick_length=0.02):
+def draw_unitary_circle(ax: Axes, sync_rate, tau_max: int = None, Color = 'white', tick_length=0.02):
     if not isinstance(ax, Axes):
         raise TypeError(f"'ax' must be a matplotlib Axes object, got {type(ax).__name__}")
     
@@ -297,7 +297,7 @@ def draw_unitary_circle(ax: Axes, sync_rate, tau_max: int = None, tick_length=0.
     theta = np.linspace(0, np.pi, 300)
     g_circle = center[0] + radius * np.cos(theta)
     s_circle = center[1] + radius * np.sin(theta)
-    ax.plot(g_circle, s_circle, 'w-', label='Universal Circle',lw = 1)
+    ax.plot(g_circle, s_circle, '-', color = Color, label='Universal Circle',lw = 1)
 
     # Phasor function
     def phasor(tau):
@@ -313,10 +313,10 @@ def draw_unitary_circle(ax: Axes, sync_rate, tau_max: int = None, tick_length=0.
         v_unit = v / np.linalg.norm(v)
         p1 = p - (tick_length / 2) * v_unit
         p2 = p + (tick_length / 2) * v_unit
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], 'w-', lw=1)
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], '-', lw=1, color = Color)
         label_pos = p + (tick_length * 1.2) * v_unit
         ax.text(label_pos[0], label_pos[1], f'{tau_ns} ns', fontsize=8,
-                ha='center', va='center' , color = 'w')
+                ha='center', va='center' , color = Color)
 
     # Clean formatting
     ax.set_aspect('equal')

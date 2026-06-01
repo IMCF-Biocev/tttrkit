@@ -1,34 +1,35 @@
+import copy
+from typing import Dict
+
 import numpy as np
 import xarray as xr
-
-from ptuio.reader import TTTRReader
-from ptuio.decoder import T3OverflowCorrector
-from ptuio.reconstructor import ScanConfig
-from ptuio.reconstructor import ImageReconstructor
-
 from matplotlib import cm
 from matplotlib.axes import Axes
-
-import copy
-
-from typing import Optional, Dict
-
+from ptuio.decoder import T3OverflowCorrector
+from ptuio.reader import TTTRReader
+from ptuio.reconstructor import ImageReconstructor, ScanConfig
 from scipy.optimize import curve_fit
 from scipy.signal import convolve2d
 
-
 # --- Reconstruction helpers ---
+
 
 def _gaussian(x, a, mu, sigma, c):
     return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2) + c
 
-def _fit_gaussian_peak(shifts: np.ndarray, scores: np.ndarray) -> Optional[float]:
+
+def _fit_gaussian_peak(shifts: np.ndarray, scores: np.ndarray) -> float | None:
     try:
-        p0 = [scores.max() - scores.min(), shifts[np.argmax(scores)], 0.1* (shifts.max() - shifts.min()), scores.min()]
+        p0 = [
+            scores.max() - scores.min(),
+            shifts[np.argmax(scores)],
+            0.1 * (shifts.max() - shifts.min()),
+            scores.min(),
+        ]
         popt, _ = curve_fit(_gaussian, shifts, scores, p0=p0)
-        fit = _gaussian(shifts,*popt)
+        fit = _gaussian(shifts, *popt)
         return float(popt[1]), fit  # mu = estimated phase shift
-        
+
     except RuntimeError:
         return None
 
@@ -40,19 +41,19 @@ def estimate_tcspc_bins(header_tags: dict, buffer: int = 10) -> int:
     return bins
 
 
-
-
-def estimate_bidirectional_shift(reader: TTTRReader, 
-                                 config: ScanConfig,
-                                 wrap: int = 1024,
-                                 max_shift: float = .01, 
-                                 steps: int = 11,
-                                 chunk_length: int = 500_000, 
-                                 verbose: bool = True) -> tuple[float, np.ndarray]:
+def estimate_bidirectional_shift(
+    reader: TTTRReader,
+    config: ScanConfig,
+    wrap: int = 1024,
+    max_shift: float = 0.01,
+    steps: int = 11,
+    chunk_length: int = 500_000,
+    verbose: bool = True,
+) -> tuple[float, np.ndarray]:
     """
-    Estimate the optimal phase shift (as fraction of line duration) for backward lines 
+    Estimate the optimal phase shift (as fraction of line duration) for backward lines
     in bidirectional scanning.
-    
+
     Args:
         reader: TTTRReader instance
         config: A ScanConfig instance.
@@ -64,11 +65,11 @@ def estimate_bidirectional_shift(reader: TTTRReader,
     Returns:
         Tuple of best phase shift (float) in units of line duration (e.g., -0.015) and numpy array of shifts, correlation scores, and fit for inspection.
     """
-    
-    
 
     if not config.bidirectional:
-        raise ValueError("ScanConfig must have bidirectional=True to estimate phase shift.")
+        raise ValueError(
+            "ScanConfig must have bidirectional=True to estimate phase shift."
+        )
 
     if verbose:
         print("Estimating bidirectional phase shift...")
@@ -81,45 +82,49 @@ def estimate_bidirectional_shift(reader: TTTRReader,
 
     line_bin = config.line_accumulations[0] * 2
 
-    shifts = np.linspace(config.bidirectional_phase_shift-max_shift,
-                         config.bidirectional_phase_shift+max_shift, steps)
+    shifts = np.linspace(
+        config.bidirectional_phase_shift - max_shift,
+        config.bidirectional_phase_shift + max_shift,
+        steps,
+    )
     scores = np.zeros_like(shifts)
     corrector = T3OverflowCorrector(wraparound=wrap)
-    
+
     for i, shift in enumerate(shifts):
-        
+
         # Clone config and apply shift
         test_config = copy.deepcopy(base_config)
         test_config.bidirectional_phase_shift = shift
-        recon = ImageReconstructor(config=test_config,outputs=["photon_count"])
+        recon = ImageReconstructor(
+            config=test_config, outputs=["photon_count"]
+        )
         chunk = reader.read(count=chunk_length)
         corrected_chunk = corrector.correct(chunk)
         recon.update(corrected_chunk)
         pc = xr.DataArray(
             data=recon.photon_count.astype(np.float32),
             coords={
-                "frame" : np.arange(test_config.frames),
+                "frame": np.arange(test_config.frames),
                 "line": np.arange(test_config.lines),
                 "pixel": np.arange(test_config.pixels),
-                "channel": np.arange(test_config.max_detector)
-            }
+                "channel": np.arange(test_config.max_detector),
+            },
         )
-
 
         # pc = xr.DataArray(recon.photon_count.astype(np.float32))
         # pc = pc.rename({"dim_0" : "frame",
         #     "dim_1" : "line",
         #     "dim_2" : "pixel",
         #     "dim_3" : "channel"})
-        pc = pc.sum(dim = 'channel')
-        pc = pc.isel(frame = 0)
+        pc = pc.sum(dim="channel")
+        pc = pc.isel(frame=0)
         forward = pc[::2, :]
         backward = pc[1::2, :]
-        forward = forward.coarsen(line = line_bin).sum()
-        backward = backward.coarsen(line = line_bin).sum()
-        
+        forward = forward.coarsen(line=line_bin).sum()
+        backward = backward.coarsen(line=line_bin).sum()
+
         # Ensure same number of lines
-        num_pairs = min(forward.sizes['line'], backward.sizes['line'])
+        num_pairs = min(forward.sizes["line"], backward.sizes["line"])
         fwd = forward.isel(line=slice(0, num_pairs))
         bwd = backward.isel(line=slice(0, num_pairs))
 
@@ -150,13 +155,21 @@ def estimate_bidirectional_shift(reader: TTTRReader,
     if verbose:
         print(f"Best estimated shift: {best_shift:.5f}")
 
-    return best_shift, np.stack((shifts,scores,fit))
+    return best_shift, np.stack((shifts, scores, fit))
+
 
 # --- Image functions ---
 
-def create_FLIM_image(mean_photon_arrival_time, intensity, colormap=cm.rainbow, 
-                      lt_min=None, lt_max=None,
-                      int_min=None, int_max=None):
+
+def create_FLIM_image(
+    mean_photon_arrival_time,
+    intensity,
+    colormap=cm.rainbow,
+    lt_min=None,
+    lt_max=None,
+    int_min=None,
+    int_max=None,
+):
     """
     Create an RGB FLIM image from lifetime and intensity data.
 
@@ -173,7 +186,9 @@ def create_FLIM_image(mean_photon_arrival_time, intensity, colormap=cm.rainbow,
 
     # Validate shape
     if mean_photon_arrival_time.shape != intensity.shape:
-        raise ValueError("Lifetime and intensity arrays must have the same shape")
+        raise ValueError(
+            "Lifetime and intensity arrays must have the same shape"
+        )
 
     # Lifetime normalization
     if lt_min is None or lt_max is None:
@@ -189,23 +204,29 @@ def create_FLIM_image(mean_photon_arrival_time, intensity, colormap=cm.rainbow,
     if int_max == int_min:
         raise ValueError("int_max and int_min must differ")
 
-    LT_normalized = np.clip((mean_photon_arrival_time - lt_min) / (lt_max - lt_min), 0, 1)
+    LT_normalized = np.clip(
+        (mean_photon_arrival_time - lt_min) / (lt_max - lt_min), 0, 1
+    )
     LT_rgb = colormap(LT_normalized)[..., :3]  # Drop alpha
-    intensity_normalized = np.clip((intensity - int_min) / (int_max - int_min), 0, 1)
+    intensity_normalized = np.clip(
+        (intensity - int_min) / (int_max - int_min), 0, 1
+    )
 
     return LT_rgb * intensity_normalized[..., np.newaxis]
 
 
 # --- Marker Helpers ---
 
+
 def marker_events(events: np.ndarray) -> np.ndarray:
     """Return only events where channel == 63 and special != 15 (non-overflow markers)."""
-    return events[(events['channel'] < 63) & (events['special'] != 0)]
+    return events[(events["channel"] < 63) & (events["special"] != 0)]
+
 
 def get_marker_distribution(events: np.ndarray) -> Dict[int, int]:
     """Returns a count of each special marker code."""
-    mask = (events['channel'] < 63) & (events['special'] != 0)
-    markers = events['channel'][mask]
+    mask = (events["channel"] < 63) & (events["special"] != 0)
+    markers = events["channel"][mask]
     unique, counts = np.unique(markers, return_counts=True)
     return dict(zip(unique.tolist(), counts.tolist()))
 
@@ -213,27 +234,28 @@ def get_marker_distribution(events: np.ndarray) -> Dict[int, int]:
 # --- Phasor functions ---
 
 
-def smooth_phasor(phasor,count,size: int = 3):
-      kernel = np.ones((size, size), dtype=np.float32)
+def smooth_phasor(phasor, count, size: int = 3):
+    kernel = np.ones((size, size), dtype=np.float32)
 
-      # Set invalid phasors to 0
-      valid = np.isfinite(phasor) & (count > 0)
-      phasor_weighted = np.zeros_like(phasor, dtype=np.complex64)
-      phasor_weighted[valid] = phasor[valid] * count[valid]
-      count_weighted = np.zeros_like(count, dtype=np.float32)
-      count_weighted[valid] = count[valid]
+    # Set invalid phasors to 0
+    valid = np.isfinite(phasor) & (count > 0)
+    phasor_weighted = np.zeros_like(phasor, dtype=np.complex64)
+    phasor_weighted[valid] = phasor[valid] * count[valid]
+    count_weighted = np.zeros_like(count, dtype=np.float32)
+    count_weighted[valid] = count[valid]
 
-      # Convolve
-      num = convolve2d(phasor_weighted.real, kernel, mode='same') + \
-            1j * convolve2d(phasor_weighted.imag, kernel, mode='same')
-      den = convolve2d(count_weighted, kernel, mode='same')
+    # Convolve
+    num = convolve2d(
+        phasor_weighted.real, kernel, mode="same"
+    ) + 1j * convolve2d(phasor_weighted.imag, kernel, mode="same")
+    den = convolve2d(count_weighted, kernel, mode="same")
 
-      # Normalize
-      phasor_smoothed = np.full_like(phasor, np.nan + 1j * np.nan)
-      mask = den > 0
-      phasor_smoothed[mask] = num[mask] / den[mask]
+    # Normalize
+    phasor_smoothed = np.full_like(phasor, np.nan + 1j * np.nan)
+    mask = den > 0
+    phasor_smoothed[mask] = num[mask] / den[mask]
 
-      return phasor_smoothed
+    return phasor_smoothed
 
 
 def get_phasor_from_decay(
@@ -277,18 +299,21 @@ def get_phasor_from_decay(
     return phasor
 
 
-def draw_unitary_circle(ax: Axes, sync_rate, tau_max: int = None, Color = 'white', tick_length=0.02):
+def draw_unitary_circle(
+    ax: Axes, sync_rate, tau_max: int = None, tick_length=0.02
+):
     if not isinstance(ax, Axes):
-        raise TypeError(f"'ax' must be a matplotlib Axes object, got {type(ax).__name__}")
-    
+        raise TypeError(
+            f"'ax' must be a matplotlib Axes object, got {type(ax).__name__}"
+        )
+
     omega = 2 * np.pi * sync_rate
 
     if tau_max is None:
         period_ns = 1e9 / sync_rate
         tau_max = int(np.ceil(period_ns / 2))
-        
+
     taus_ns = np.arange(1, tau_max + 1)
-    
 
     center = np.array([0.5, 0])
     radius = 0.5
@@ -297,12 +322,12 @@ def draw_unitary_circle(ax: Axes, sync_rate, tau_max: int = None, Color = 'white
     theta = np.linspace(0, np.pi, 300)
     g_circle = center[0] + radius * np.cos(theta)
     s_circle = center[1] + radius * np.sin(theta)
-    ax.plot(g_circle, s_circle, '-', color = Color, label='Universal Circle',lw = 1)
+    ax.plot(g_circle, s_circle, "w-", label="Universal Circle", lw=1)
 
     # Phasor function
     def phasor(tau):
-        g = 1 / (1 + (omega * tau)**2)
-        s = (omega * tau) / (1 + (omega * tau)**2)
+        g = 1 / (1 + (omega * tau) ** 2)
+        s = (omega * tau) / (1 + (omega * tau) ** 2)
         return np.array([g, s])
 
     # Draw ticks
@@ -313,17 +338,24 @@ def draw_unitary_circle(ax: Axes, sync_rate, tau_max: int = None, Color = 'white
         v_unit = v / np.linalg.norm(v)
         p1 = p - (tick_length / 2) * v_unit
         p2 = p + (tick_length / 2) * v_unit
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], '-', lw=1, color = Color)
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], "w-", lw=1)
         label_pos = p + (tick_length * 1.2) * v_unit
-        ax.text(label_pos[0], label_pos[1], f'{tau_ns} ns', fontsize=8,
-                ha='center', va='center' , color = Color)
+        ax.text(
+            label_pos[0],
+            label_pos[1],
+            f"{tau_ns} ns",
+            fontsize=8,
+            ha="center",
+            va="center",
+            color="w",
+        )
 
     # Clean formatting
-    ax.set_aspect('equal')
+    ax.set_aspect("equal")
     ax.set_xlim(-0.1, 1.1)
     ax.set_ylim(0, 1.1)
-    ax.set_xlabel('g')
-    ax.set_ylabel('s')
+    ax.set_xlabel("g")
+    ax.set_ylabel("s")
 
 
 def average_phasor(
@@ -373,7 +405,7 @@ def average_phasor(
 
     return weighted_sum / total_photons
 
-def shift_decay(arr, n):
-    wrapped = np.roll(arr, -n) 
-    return wrapped
 
+def shift_decay(arr, n):
+    wrapped = np.roll(arr, -n)
+    return wrapped

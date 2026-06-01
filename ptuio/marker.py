@@ -6,50 +6,50 @@ from .reconstructor import ScanConfig
 # AS OF NOW, THIS SCRIPT IS NOT NEEDED. DISSOLVE THE USEFUL PARTS IN RECONSTRUCTOR OR UTILS (NOT EXISTING YET)
 
 # class MarkerInterpreter:
-    # def __init__(self, marker_map: Dict[Union[int, Tuple[int, ...]], str]):
-    #     """
-    #     Initializes the interpreter with a user-defined marker map.
-    #     Keys can be individual integers or tuples of integers representing multiple codes.
-    #     Values are the semantic marker labels (e.g., 'line_start').
-    #     """
-    #     self.marker_map = self._normalize(marker_map)
+# def __init__(self, marker_map: Dict[Union[int, Tuple[int, ...]], str]):
+#     """
+#     Initializes the interpreter with a user-defined marker map.
+#     Keys can be individual integers or tuples of integers representing multiple codes.
+#     Values are the semantic marker labels (e.g., 'line_start').
+#     """
+#     self.marker_map = self._normalize(marker_map)
 
-    # def _normalize(self, raw_map: Dict) -> Dict[Tuple[int, ...], str]:
-    #     result = {}
-    #     for k, v in raw_map.items():
-    #         if isinstance(k, int):
-    #             result[(k,)] = v
-    #         elif isinstance(k, (list, tuple, set)):
-    #             result[tuple(k)] = v
-    #         else:
-    #             raise TypeError(f"Invalid marker key: {k}")
-    #     return result
+# def _normalize(self, raw_map: Dict) -> Dict[Tuple[int, ...], str]:
+#     result = {}
+#     for k, v in raw_map.items():
+#         if isinstance(k, int):
+#             result[(k,)] = v
+#         elif isinstance(k, (list, tuple, set)):
+#             result[tuple(k)] = v
+#         else:
+#             raise TypeError(f"Invalid marker key: {k}")
+#     return result
 
-    # def classify(self, events: np.ndarray) -> np.ndarray:
-    #     """
-    #     Classifies marker events based on the defined map.
+# def classify(self, events: np.ndarray) -> np.ndarray:
+#     """
+#     Classifies marker events based on the defined map.
 
-    #     Parameters:
-    #         events: structured array with 'channel' and 'special' fields
+#     Parameters:
+#         events: structured array with 'channel' and 'special' fields
 
-    #     Returns:
-    #         An array of marker labels (str), empty string if no match
-    #     """
-    #     is_marker = (events['channel'] < 63) & (events['special'] != 0)
-    #     labels = np.full(events.shape[0], '', dtype=object)
+#     Returns:
+#         An array of marker labels (str), empty string if no match
+#     """
+#     is_marker = (events['channel'] < 63) & (events['special'] != 0)
+#     labels = np.full(events.shape[0], '', dtype=object)
 
-    #     for codes, label in self.marker_map.items():
-    #         mask = is_marker & np.isin(events['channel'], codes)
-    #         labels[mask] = label
+#     for codes, label in self.marker_map.items():
+#         mask = is_marker & np.isin(events['channel'], codes)
+#         labels[mask] = label
 
-    #     return labels
+#     return labels
 
-    # def extract(self, events: np.ndarray, label: str) -> np.ndarray:
-    #     """
-    #     Extracts events matching the given marker label.
-    #     """
-    #     classified = self.classify(events)
-    #     return events[classified == label]
+# def extract(self, events: np.ndarray, label: str) -> np.ndarray:
+#     """
+#     Extracts events matching the given marker label.
+#     """
+#     classified = self.classify(events)
+#     return events[classified == label]
 
 
 
@@ -142,7 +142,7 @@ from .reconstructor import ScanConfig
 #         for entry in marker_definitions:
 #             role = entry["role"]
 #             label = entry["label"]
-#             codes = entry["codes"]  
+#             codes = entry["codes"]
 
 #             if isinstance(codes, int):
 #                 codes = [codes]
@@ -164,7 +164,7 @@ from .reconstructor import ScanConfig
 #             mask = is_marker & (events['special'] == code)
 #             labels[mask] = label
 #         return labels
-    
+
 #     def extract_by_role(self, events, role):
 #         codes = self._role_to_codes[role]
 #         return events[(events['channel'] < 63) & np.isin(events['special'], codes)]
@@ -180,9 +180,8 @@ from .reconstructor import ScanConfig
 #         return self._label_to_code[label]
 
 
-
-# class MarkerInterpreter: 
-#     # MAKE OVER ENTIRELY. MAKE IT ACCEPT TUPPLE AND BE CALLED 
+# class MarkerInterpreter:
+#     # MAKE OVER ENTIRELY. MAKE IT ACCEPT TUPPLE AND BE CALLED
 #     # cfg = ScanConfig(bidirectional=True, line_start_marker=1, line_stop_marker=2, frame_start_marker=4)
 #     # interpreter = MarkerInterpreter(scan_config=cfg)
 #     # line_start_events = interpreter.extract(corrected, cfg.line_start_marker)
@@ -226,8 +225,8 @@ from .reconstructor import ScanConfig
 #         return self._role_to_channel.get(role, ())
 
 
-class MarkerInterpreter: 
-    # MAKE OVER ENTIRELY. MAKE IT ACCEPT TUPPLE AND BE CALLED 
+class MarkerInterpreter:
+    # MAKE OVER ENTIRELY. MAKE IT ACCEPT TUPPLE AND BE CALLED
     # cfg = ScanConfig(bidirectional=True, line_start_marker=1, line_stop_marker=2, frame_start_marker=4)
     # interpreter = MarkerInterpreter(scan_config=cfg)
     # line_start_events = interpreter.extract(corrected, cfg.line_start_marker)
@@ -258,10 +257,10 @@ class MarkerInterpreter:
     #     ]
 
     def classify(self, events):
-        is_marker = (events['channel'] < 63) & (events['special'] != 0)
-        labels = np.full(events.shape[0], '', dtype=object)
+        is_marker = (events["channel"] < 63) & (events["special"] != 0)
+        labels = np.full(events.shape[0], "", dtype=object)
         for channel, role in self._channel_to_role.items():
-            mask = is_marker & (events['special'] == channel)
+            mask = is_marker & (events["special"] == channel)
             labels[mask] = role
         return labels
 
@@ -274,18 +273,21 @@ class MarkerInterpreter:
 
 # --- Optional Helpers ---
 
+
 def marker_events(events: np.ndarray) -> np.ndarray:
     """Return only events where channel == 63 and special != 15 (non-overflow markers)."""
-    return events[(events['channel'] < 63) & (events['special'] != 0)]
+    return events[(events["channel"] < 63) & (events["special"] != 0)]
+
 
 def overflow_events(events: np.ndarray) -> np.ndarray:
     """Return overflow marker events."""
-    return events[(events['channel'] == 63) & (events['special'] != 0)]
+    return events[(events["channel"] == 63) & (events["special"] != 0)]
+
 
 def get_marker_distribution(events: np.ndarray) -> Dict[int, int]:
     """Returns a count of each special marker code."""
-    mask = (events['channel'] < 63) & (events['special'] != 0)
-    markers = events['channel'][mask]
+    mask = (events["channel"] < 63) & (events["special"] != 0)
+    markers = events["channel"][mask]
     unique, counts = np.unique(markers, return_counts=True)
     return dict(zip(unique.tolist(), counts.tolist()))
 

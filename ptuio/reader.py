@@ -14,12 +14,12 @@ class TTTRReader:
         return self._header
 
     def read(self, count=None):
-        with open(self.path, 'rb') as f:
+        with open(self.path, "rb") as f:
             f.seek(self.offset)
             return np.fromfile(f, dtype=self.dtype, count=count)
 
     def iter_chunks(self, chunk_size=1000000):
-        with open(self.path, 'rb') as f:
+        with open(self.path, "rb") as f:
             f.seek(self.offset)
             while True:
                 chunk = np.fromfile(f, dtype=self.dtype, count=chunk_size)

@@ -1,17 +1,18 @@
+from collections.abc import Sequence
+from typing import Tuple, Union
 import numpy as np
-from typing import Union, Tuple, Optional, Sequence
 import xarray as xr
-from .decoder import event_dtype, get_photons, get_markers
 from numpy.typing import NDArray
 
+from .decoder import event_dtype, get_markers, get_photons
 
-segment_dtype =[
-        ("start_nsync", "i8"),
-        ("stop_nsync", "i8"),
-        ("frame_idx", "i4"),
-        ("line_idx", "i4"),
-        ("reversed", "?"),
-    ]
+segment_dtype = [
+    ("start_nsync", "i8"),
+    ("stop_nsync", "i8"),
+    ("frame_idx", "i4"),
+    ("line_idx", "i4"),
+    ("reversed", "?"),
+]
 
 AVAILABLE_OUTPUTS = [
     "photon_count",
@@ -28,12 +29,14 @@ class ScanConfig:
         pixels: int = 512,
         frames: int = 1,
         max_detector: int = 64,
-        line_accumulations: tuple = (1,), #  > 1 dimension means the scanning is sequential
+        line_accumulations: tuple = (
+            1,
+        ),  #  > 1 dimension means the scanning is sequential
         bidirectional: bool = False,
         bidirectional_phase_shift: float = 0.0,
         frame_start_marker_channel: Union[int, Tuple[int, ...]] = (4,),
         line_start_marker_channel: Union[int, Tuple[int, ...]] = (1,),
-        line_stop_marker_channel: Union[int, Tuple[int, ...]] = (2,)
+        line_stop_marker_channel: Union[int, Tuple[int, ...]] = (2,),
     ):
         self.lines = lines
         self.pixels = pixels
@@ -53,15 +56,18 @@ class ScanConfig:
         self._total_accumulations = sum(self.line_accumulations)
 
         self.frame_start_marker_channel = (
-            (frame_start_marker_channel,) if isinstance(frame_start_marker_channel, int)
+            (frame_start_marker_channel,)
+            if isinstance(frame_start_marker_channel, int)
             else tuple(frame_start_marker_channel)
         )
         self.line_start_marker_channel = (
-            (line_start_marker_channel,) if isinstance(line_start_marker_channel, int)
+            (line_start_marker_channel,)
+            if isinstance(line_start_marker_channel, int)
             else tuple(line_start_marker_channel)
         )
         self.line_stop_marker_channel = (
-            (line_stop_marker_channel,) if isinstance(line_stop_marker_channel, int)
+            (line_stop_marker_channel,)
+            if isinstance(line_stop_marker_channel, int)
             else tuple(line_stop_marker_channel)
         )
 
@@ -89,7 +95,7 @@ class ScanConfig:
             bidirectional=d.get("bidirectional", False),
             frame_start_marker=d.get("frame_start_marker", ()),
             line_start_marker=d.get("line_start_marker", ()),
-            line_stop_marker=d.get("line_stop_marker", ())
+            line_stop_marker=d.get("line_stop_marker", ()),
         )
 
     def __repr__(self):
@@ -98,98 +104,104 @@ class ScanConfig:
 
 class ImageReconstructor:
     def __init__(
-            self, config: ScanConfig, 
-            roi_mask: Optional[np.ndarray] = None,
-            outputs: Optional[Sequence[str]] = None,
-            omega: float = 0.012, 
-            tcspc_channels: int = 2 ** 15
-            ):
-                
-                
-                """
-                Initialize an image reconstructor.
+        self,
+        config: ScanConfig,
+        roi_mask: np.ndarray | None = None,
+        outputs: Sequence[str] | None = None,
+        omega: float = 0.012,
+        tcspc_channels: int = 2**15,
+    ):
+        """
+        Initialize an image reconstructor.
 
-                Parameters:
-                    config (ScanConfig): Scan configuration object.
+        Parameters:
+            config (ScanConfig): Scan configuration object.
 
-                    roi_mask (ndarray, optional): Binary mask of shape (lines, pixels)
-                        to restrict processing to specific regions.
+            roi_mask (ndarray, optional): Binary mask of shape (lines, pixels)
+                to restrict processing to specific regions.
 
-                    outputs (list of str, optional): List of outputs to compute.
-                        Each item must be one of the following:
-                        - "photon_count"
-                        - "mean_arrival_time"
-                        - "phasor"
-                        - "tcspc_histogram"
-                        If None, all outputs are computed.
+            outputs (list of str, optional): List of outputs to compute.
+                Each item must be one of the following:
+                - "photon_count"
+                - "mean_arrival_time"
+                - "phasor"
+                - "tcspc_histogram"
+                If None, all outputs are computed.
 
-                    omega (float): Angular frequency for phasor computation.
+            omega (float): Angular frequency for phasor computation.
 
-                    tcspc_channels (int): Number of time bins for TCSPC histogram.
-                """
+            tcspc_channels (int): Number of time bins for TCSPC histogram.
+        """
 
-        
-        
-                if not isinstance(config, ScanConfig):
-                    raise TypeError("ImageReconstructor requires a ScanConfig object")   
-                self.config = config
-                self.shape = (
-                    config.frames,
-                    config.lines * config._total_accumulations,
-                    config.pixels,
-                    config.max_detector
-                )
-                self.omega = omega
-                self.active_detectors = set()
+        if not isinstance(config, ScanConfig):
+            raise TypeError("ImageReconstructor requires a ScanConfig object")
+        self.config = config
+        self.shape = (
+            config.frames,
+            config.lines * config._total_accumulations,
+            config.pixels,
+            config.max_detector,
+        )
+        self.omega = omega
+        self.active_detectors = set()
 
-                if outputs is None:
-                    outputs = AVAILABLE_OUTPUTS.copy()
+        if outputs is None:
+            outputs = AVAILABLE_OUTPUTS.copy()
 
-                # Validate requested outputs
-                invalid = [o for o in outputs if o not in AVAILABLE_OUTPUTS]
-                if invalid:
-                    raise ValueError(f"Invalid output(s): {invalid}. Must be in {AVAILABLE_OUTPUTS}")
+        # Validate requested outputs
+        invalid = [o for o in outputs if o not in AVAILABLE_OUTPUTS]
+        if invalid:
+            raise ValueError(
+                f"Invalid output(s): {invalid}. Must be in {AVAILABLE_OUTPUTS}"
+            )
 
-                self.requested_outputs = set(outputs)
-                self._resolve_dependencies()
+        self.requested_outputs = set(outputs)
+        self._resolve_dependencies()
 
-                # Initialize output arrays
-                self.tcspc_channels = tcspc_channels
-                if "arrival_sum" in self._required:
-                    self.arrival_sum = np.zeros(self.shape, dtype=np.float32)
-                if "photon_count" in self._required:
-                    self.photon_count = np.zeros(self.shape, dtype=np.uint32)
-                if "phasor_sum" in self._required:
-                    self.phasor_sum = np.zeros(self.shape, dtype=np.complex64)
-                if "tcspc_hist" in self._required:
-                    self.tcspc_hist = np.zeros((self.config.frames, self.config.max_detector, tcspc_channels), dtype=np.uint64)  # existing shape logic
+        # Initialize output arrays
+        self.tcspc_channels = tcspc_channels
+        if "arrival_sum" in self._required:
+            self.arrival_sum = np.zeros(self.shape, dtype=np.float32)
+        if "photon_count" in self._required:
+            self.photon_count = np.zeros(self.shape, dtype=np.uint32)
+        if "phasor_sum" in self._required:
+            self.phasor_sum = np.zeros(self.shape, dtype=np.complex64)
+        if "tcspc_hist" in self._required:
+            self.tcspc_hist = np.zeros(
+                (self.config.frames, self.config.max_detector, tcspc_channels),
+                dtype=np.uint64,
+            )  # existing shape logic
 
-                # Rolling context
-                self._partial_start_nsync = None   # stores unmatched line marker nsync from previous chunk
-                self._current_line_idx = 0
-                self._current_frame_idx = 0               # current frame index
-                self._pending_photons = np.empty((0,), dtype=event_dtype)
-                self._frame_marker_nsyncs = np.empty((0,), dtype=np.uint64)
-                # self._start_marker_nsyncs = np.empty((0,), dtype=np.ndarray)
-                # self._stop_marker_nsyncs = np.empty((0,), dtype=np.ndarray)
+        # Rolling context
+        self._partial_start_nsync = (
+            None  # stores unmatched marker from previous chunk
+        )
+        self._current_line_idx = 0
+        self._current_frame_idx = 0  # current frame index
+        self._pending_photons = np.empty((0,), dtype=event_dtype)
+        self._frame_marker_nsyncs = np.empty((0,), dtype=np.uint64)
+        # self._start_marker_nsyncs = np.empty((0,), dtype=np.ndarray)
+        # self._stop_marker_nsyncs = np.empty((0,), dtype=np.ndarray)
 
-                self._finished = False  # flag: stop processing when max frames reached
-                
-                self.stop_marker_phase = None
-                self._stop_phase_computed = False
-                self.line_duration = 0
+        self._finished = False  # flag: stop processing when max frames reached
 
-                # ROI for masking
-                self._roi_mask_stretched = None
-                if roi_mask is not None:
-                    self._roi_mask_stretched = self._stretch_roi_mask(roi_mask)
+        self.stop_marker_phase = None
+        self._stop_phase_computed = False
+        self.line_duration = 0
+
+        # ROI for masking
+        self._roi_mask_stretched = None
+        if roi_mask is not None:
+            self._roi_mask_stretched = self._stretch_roi_mask(roi_mask)
 
     def update(self, events: np.ndarray):
         if self._finished:
             return
         
         if events.dtype != event_dtype:
-            raise TypeError(f"Expected events with dtype {event_dtype}, got {events.dtype}")
+            raise TypeError(
+                f"Expected events with dtype {event_dtype}, got {events.dtype}"
+            )
 
         # Filter non-marker photons
         if len(self._pending_photons) > 0:
@@ -199,23 +211,30 @@ class ImageReconstructor:
         photons = get_photons(events)
 
         # Extract frame markers
-        frame_markers = get_markers(events, self.config.frame_start_marker_channel)
+        frame_markers = get_markers(
+            events, self.config.frame_start_marker_channel
+        )
 
         # Extract line markers
-        start_markers = get_markers(events, self.config.line_start_marker_channel)
+        start_markers = get_markers(
+            events, self.config.line_start_marker_channel
+        )
         if len(start_markers) == 0:
             # No line start markers → nothing to assemble this round
             return
 
         stop_markers = (
             get_markers(events, self.config.line_stop_marker_channel)
-            if self.config.line_stop_marker_channel else None
+            if self.config.line_stop_marker_channel
+            else None
         )
 
         if not self._stop_phase_computed:
-            self._compute_stop_phase(start_markers['nsync'], stop_markers['nsync'])
+            self._compute_stop_phase(
+                start_markers["nsync"], stop_markers["nsync"]
+            )
 
-        line_segments = self._build_line_segments(frame_markers,start_markers)
+        line_segments = self._build_line_segments(frame_markers, start_markers)
 
         self._assign_photons_to_segments(photons, line_segments)
 
@@ -228,33 +247,43 @@ class ImageReconstructor:
         channels = max(active_detectors) + 1
 
         if "tcspc_histogram" in self.requested_outputs:
-            self.tcspc_hist = self.tcspc_hist[:,:channels,:]
-            data["tcspc_histogram"] = (("frame","channel","tcspc_channel"),self.tcspc_hist)
+            self.tcspc_hist = self.tcspc_hist[:, :channels, :]
+            data["tcspc_histogram"] = (
+                ("frame", "channel", "tcspc_channel"),
+                self.tcspc_hist,
+            )
 
         if "photon_count" in self._required:
-            photon_count = np.zeros(shape=(
-                self.config.frames,
-                len(self.config.line_accumulations),
-                self.config.lines,
-                self.config.pixels,
-                max(self.active_detectors) + 1
-            ), dtype = np.uint32)
+            photon_count = np.zeros(
+                shape=(
+                    self.config.frames,
+                    len(self.config.line_accumulations),
+                    self.config.lines,
+                    self.config.pixels,
+                    max(self.active_detectors) + 1,
+                ),
+                dtype=np.uint32,
+            )
 
-            pattern = np.repeat(np.arange(len(self.config.line_accumulations)), self.config.line_accumulations)
+            pattern = np.repeat(
+                np.arange(len(self.config.line_accumulations)),
+                self.config.line_accumulations,
+            )
 
             # Total pattern applied to all lines
-            sequence_pattern = np.tile(pattern, self.config.lines)  # shape: (total_lines,)
+            sequence_pattern = np.tile(
+                pattern, self.config.lines
+            )  # shape: (total_lines,)
 
-            
             lines = self.config.lines
             pixels = self.config.pixels
 
 
         if "arrival_sum" in self._required:
-            arrival_sum = np.zeros_like(photon_count, dtype = np.float32)
+            arrival_sum = np.zeros_like(photon_count, dtype=np.float32)
 
         if "phasor_sum" in self._required:
-            phasor_sum = np.zeros_like(photon_count, dtype = np.complex64)
+            phasor_sum = np.zeros_like(photon_count, dtype=np.complex64)
 
         if "photon_count" in self._required:
 
@@ -262,37 +291,76 @@ class ImageReconstructor:
                 seq_line_idx = np.where(sequence_pattern == accu_idx)[0]
                 accum = self.config.line_accumulations[accu_idx]
                 for f in range(self.config.frames):
-                    summed_PC = self._reshape_and_sum(self.photon_count, f, seq_line_idx, lines, accum, pixels, channels)
+                    summed_PC = self._reshape_and_sum(
+                        self.photon_count,
+                        f,
+                        seq_line_idx,
+                        lines,
+                        accum,
+                        pixels,
+                        channels,
+                    )
                     photon_count[f, accu_idx, :, :, :] = summed_PC
                     if "arrival_sum" in self._required:
-                        summed_AS = self._reshape_and_sum(self.arrival_sum, f, seq_line_idx, lines, accum, pixels, channels)
+                        summed_AS = self._reshape_and_sum(
+                            self.arrival_sum,
+                            f,
+                            seq_line_idx,
+                            lines,
+                            accum,
+                            pixels,
+                            channels,
+                        )
                         arrival_sum[f, accu_idx, :, :, :] = summed_AS
                     if "phasor_sum" in self._required:
-                        summed_PS = self._reshape_and_sum(self.phasor_sum, f, seq_line_idx, lines, accum, pixels, channels)
+                        summed_PS = self._reshape_and_sum(
+                            self.phasor_sum,
+                            f,
+                            seq_line_idx,
+                            lines,
+                            accum,
+                            pixels,
+                            channels,
+                        )
                         phasor_sum[f, accu_idx, :, :, :] = summed_PS
 
-        if "photon_count" in self.requested_outputs:                        
-            data["photon_count"] = (("frame", "sequence", "line", "pixel", "channel"), photon_count)
-                    
+        if "photon_count" in self.requested_outputs:
+            data["photon_count"] = (
+                ("frame", "sequence", "line", "pixel", "channel"),
+                photon_count,
+            )
+
         if "mean_arrival_time" in self.requested_outputs:
-            with np.errstate(divide='ignore', invalid='ignore'):
-                mean_arrival = np.true_divide(arrival_sum, photon_count, dtype=np.float32)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                mean_arrival = np.true_divide(
+                    arrival_sum, photon_count, dtype=np.float32
+                )
                 mean_arrival[photon_count == 0] = 0  # set empty pixels to 0
-            data["mean_arrival_time"] = (("frame", "sequence", "line", "pixel", "channel"), mean_arrival)
-        
+            data["mean_arrival_time"] = (
+                ("frame", "sequence", "line", "pixel", "channel"),
+                mean_arrival,
+            )
 
         if "phasor" in self.requested_outputs:
 
             # Normalize phasor
-            with np.errstate(divide='ignore', invalid='ignore'):
-                norm_phasor = np.true_divide(phasor_sum, photon_count, dtype=np.complex64)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                norm_phasor = np.true_divide(
+                    phasor_sum, photon_count, dtype=np.complex64
+                )
                 # norm_phasor[photon_count == 0] = 0
                 norm_phasor[photon_count == 0] = np.nan + 1j * np.nan
 
             g = np.real(norm_phasor)
             s = np.imag(norm_phasor)
-            data["phasor_g"] = (("frame", "sequence", "line", "pixel", "channel"), g)
-            data["phasor_s"] = (("frame", "sequence", "line", "pixel", "channel"), s)
+            data["phasor_g"] = (
+                ("frame", "sequence", "line", "pixel", "channel"),
+                g,
+            )
+            data["phasor_s"] = (
+                ("frame", "sequence", "line", "pixel", "channel"),
+                s,
+            )
 
         all_coords = {
             "frame": np.arange(self.config.frames),
@@ -339,18 +407,24 @@ class ImageReconstructor:
 
     def _stretch_roi_mask(self, base_mask: np.ndarray) -> np.ndarray:
         if base_mask.shape != (self.config.lines, self.config.pixels):
-            raise ValueError(f"Base ROI mask must have shape ({self.config.lines}, {self.config.pixels})")
+            raise ValueError(
+                f"Base ROI mask must have shape ({self.config.lines}, {self.config.pixels})"
+            )
 
         # Expand to (frames, sequences, lines, pixels)
         stretched_mask = np.zeros(
-            (self.config.frames,
-            self.config.lines * self.config._total_accumulations,
-            self.config.pixels),
-            dtype=bool
+            (
+                self.config.frames,
+                self.config.lines * self.config._total_accumulations,
+                self.config.pixels,
+            ),
+            dtype=bool,
         )
 
         for f_idx in range(self.config.frames):
-            stretched_mask[f_idx,:,:] = np.repeat(base_mask, repeats=self.config._total_accumulations, axis=0)
+            stretched_mask[f_idx, :, :] = np.repeat(
+                base_mask, repeats=self.config._total_accumulations, axis=0
+            )
 
         return stretched_mask
        
@@ -366,40 +440,50 @@ class ImageReconstructor:
         frame_nsyncs = frame_markers["nsync"]
         start_nsyncs = start_markers["nsync"]
 
-        self._frame_marker_nsyncs = np.append(self._frame_marker_nsyncs, frame_nsyncs, axis=0)
+        self._frame_marker_nsyncs = np.append(
+            self._frame_marker_nsyncs, frame_nsyncs, axis=0
+        )
 
         if self._partial_start_nsync is not None:
-            start_nsyncs = np.insert(start_nsyncs, 0, self._partial_start_nsync)
+            start_nsyncs = np.insert(
+                start_nsyncs, 0, self._partial_start_nsync
+            )
             self._partial_start_nsync = None
-            
+
         self._partial_start_nsync = start_nsyncs[-1]
 
         start = start_nsyncs[:-1].astype(np.int64)
         stop = start + self.line_duration
 
-        if len(start) == 0: 
-            return np.empty(0,dtype=segment_dtype)
+        if len(start) == 0:
+            return np.empty(0, dtype=segment_dtype)
 
         # Assign frames vectorized
-        frame_idx = np.searchsorted(self._frame_marker_nsyncs, start, side="right") - 1
-        
+        frame_idx = (
+            np.searchsorted(self._frame_marker_nsyncs, start, side="right") - 1
+        )
+
         # Clip to requested frame count
         valid = frame_idx < self.config.frames
         if not np.any(valid):
             self._finished = True
-            return np.empty(0,dtype=segment_dtype)
-        
+            return np.empty(0, dtype=segment_dtype)
+
         start = start[valid]
         stop = stop[valid]
         frame_idx = frame_idx[valid]
 
         # If bidirectional: even=forward, odd=reversed
-        _ , inverse, counts = np.unique(frame_idx, return_inverse=True, return_counts=True)
-        cumsum = np.cumsum(np.r_[0,counts[:-1]])
-        line_idx = np.arange(len(frame_idx)) - cumsum[inverse]  
+        _, inverse, counts = np.unique(
+            frame_idx, return_inverse=True, return_counts=True
+        )
+        cumsum = np.cumsum(np.r_[0, counts[:-1]])
+        line_idx = np.arange(len(frame_idx)) - cumsum[inverse]
 
         if frame_idx[0] == self._current_frame_idx:
-            line_idx[frame_idx == self._current_frame_idx] += self._current_line_idx
+            line_idx[
+                frame_idx == self._current_frame_idx
+            ] += self._current_line_idx
 
         self._current_frame_idx = frame_idx[-1]
         self._current_line_idx = line_idx[-1] + 1
@@ -407,7 +491,9 @@ class ImageReconstructor:
         reversed_mask = self.config.bidirectional & (line_idx % 2 == 1)
 
         if self.config.bidirectional:
-            shift = int(self.config.bidirectional_phase_shift * self.line_duration)
+            shift = int(
+                self.config.bidirectional_phase_shift * self.line_duration
+            )
             start[reversed_mask] += shift
             stop[reversed_mask] += shift
 
@@ -423,30 +509,40 @@ class ImageReconstructor:
 
         return result
 
-    def _assign_photons_to_segments(self, photons: np.ndarray, segments: np.ndarray) -> None:
+    def _assign_photons_to_segments(
+        self, photons: np.ndarray, segments: np.ndarray
+    ) -> None:
         if len(segments) == 0 or photons.size == 0:
             return
-        
-        
-        if photons.dtype != event_dtype:
-            raise TypeError(f"Expected events with dtype {event_dtype}, got {photons.dtype}")
 
+        if photons.dtype != event_dtype:
+            raise TypeError(
+                f"Expected events with dtype {event_dtype}, got {photons.dtype}"
+            )
 
         segment_starts = segments["start_nsync"]
         segment_ends = segments["stop_nsync"]
-        segment_index = np.searchsorted(segment_starts, photons["nsync"], side="right") - 1
+        segment_index = (
+            np.searchsorted(segment_starts, photons["nsync"], side="right") - 1
+        )
 
-        if photons['dtime'].max() >= self.tcspc_channels:
-            print(f"\033[91mWarning: TCSPC channel overflow detected. Max channel: {photons['dtime'].max()}\033[0m")
+        if photons["dtime"].max() >= self.tcspc_channels:
+            print(
+                f"\033[91mWarning: TCSPC channel overflow detected. Max channel: {photons['dtime'].max()}\033[0m"
+            )
 
-        if photons['channel'].max() >= self.config.max_detector:
-            print(f"\033[91mWarning: Channel overflow detected. Max channel: {photons['channel'].max()}\033[0m")
+        if photons["channel"].max() >= self.config.max_detector:
+            print(
+                f"\033[91mWarning: Channel overflow detected. Max channel: {photons['channel'].max()}\033[0m"
+            )
 
-        valid = ((segment_index >= 0) & 
-                 (segment_index < len(segment_starts)) & 
-                 (photons['nsync'] < segment_ends[segment_index]) & 
-                 (photons['dtime'] < self.tcspc_channels) & 
-                 (photons['channel'] < self.config.max_detector))
+        valid = (
+            (segment_index >= 0)
+            & (segment_index < len(segment_starts))
+            & (photons["nsync"] < segment_ends[segment_index])
+            & (photons["dtime"] < self.tcspc_channels)
+            & (photons["channel"] < self.config.max_detector)
+        )
 
         if np.count_nonzero(valid) == 0:
             return
@@ -458,21 +554,23 @@ class ImageReconstructor:
         lines = segments["line_idx"][segment_index]
         reversed_flags = segments["reversed"][segment_index]
 
-        phase = ((photons_in_segments["nsync"].astype(np.int64) - 
-                  segment_starts[segment_index]) / 
-                  (segment_ends[segment_index] - 
-                   segment_starts[segment_index]))
-        
+        phase = (
+            photons_in_segments["nsync"].astype(np.int64)
+            - segment_starts[segment_index]
+        ) / (segment_ends[segment_index] - segment_starts[segment_index])
+
         pixels = np.floor(phase * self.config.pixels).astype(int)
 
-        pixels = np.where(reversed_flags, self.config.pixels - 1 - pixels, pixels)
+        pixels = np.where(
+            reversed_flags, self.config.pixels - 1 - pixels, pixels
+        )
 
         valid_pixels = (pixels >= 0) & (pixels < self.config.pixels)
         if np.count_nonzero(valid_pixels) == 0:
             return
-        
+
         if self._roi_mask_stretched is not None:
-            in_roi = self._roi_mask_stretched[frames,lines,pixels]
+            in_roi = self._roi_mask_stretched[frames, lines, pixels]
             valid_pixels = valid_pixels & in_roi
 
         pixels = pixels[valid_pixels]
@@ -483,53 +581,69 @@ class ImageReconstructor:
         phasors = np.exp(1j * self.omega * dtimes)
 
         if "arrival_sum" in self._required:
-            np.add.at(self.arrival_sum, (frames, lines, pixels, channels), dtimes)
+            np.add.at(
+                self.arrival_sum, (frames, lines, pixels, channels), dtimes
+            )
 
         if "photon_count" in self._required:
             np.add.at(self.photon_count, (frames, lines, pixels, channels), 1)
 
         if "phasor_sum" in self._required:
             phasors = np.exp(1j * self.omega * dtimes)
-            np.add.at(self.phasor_sum, (frames, lines, pixels, channels), phasors)
+            np.add.at(
+                self.phasor_sum, (frames, lines, pixels, channels), phasors
+            )
 
         if "tcspc_hist" in self._required:
             np.add.at(self.tcspc_hist, (frames, channels, dtimes), 1)
 
-        pending_photons_mask = photons["nsync"] >= segment_ends[-1]            
+        pending_photons_mask = photons["nsync"] >= segment_ends[-1]
         self._pending_photons = photons[pending_photons_mask]
         self.active_detectors.update(np.unique(channels))
 
-    def _reshape_and_sum(self, array, f_idx, line_indices, lines, accum, pixels, channels):
+    def _reshape_and_sum(
+        self, array, f_idx, line_indices, lines, accum, pixels, channels
+    ):
         sliced = array[f_idx, line_indices, :, :channels]
         reshaped = sliced.reshape(lines, accum, pixels, channels)
         return reshaped.sum(axis=1)
 
     def _flush_final_line(self):
 
-        final_segment = np.empty(1,dtype=segment_dtype)
+        final_segment = np.empty(1, dtype=segment_dtype)
         final_segment["start_nsync"] = self._partial_start_nsync
-        final_segment["stop_nsync"] = self._partial_start_nsync + self.line_duration
+        final_segment["stop_nsync"] = (
+            self._partial_start_nsync + self.line_duration
+        )
         final_segment["frame_idx"] = self._current_frame_idx
         final_segment["line_idx"] = self._current_line_idx
-        final_segment["reversed"] = self.config.bidirectional and (self._current_line_idx % 2 == 1)
+        final_segment["reversed"] = self.config.bidirectional and (
+            self._current_line_idx % 2 == 1
+        )
 
         self._assign_photons_to_segments(self._pending_photons, final_segment)
-        self._pending_photons = np.empty((0,), dtype=self._pending_photons.dtype)
+        self._pending_photons = np.empty(
+            (0,), dtype=self._pending_photons.dtype
+        )
         self._partial_start_nsync = None
 
     def _extract_markers(self, events, codes):
-        return events[(events["special"] != 0) & np.isin(events["channel"], codes)]
+        return events[
+            (events["special"] != 0) & np.isin(events["channel"], codes)
+        ]
 
     def _compute_stop_phase(
         self,
         start_nsyncs: NDArray[np.uint64],
         stop_nsyncs: NDArray[np.uint64],
-        default_phase: float = 0.80
+        default_phase: float = 0.80,
     ) -> None:
         if start_nsyncs.dtype != np.uint64 or stop_nsyncs.dtype != np.uint64:
-            raise TypeError("start_nsyncs and stop_nsyncs must be uint64 arrays")
+            raise TypeError(
+                "start_nsyncs and stop_nsyncs must be uint64 arrays"
+            )
         start_nsyncs = start_nsyncs.astype(np.int64, copy=False)
-        stop_nsyncs  = stop_nsyncs.astype(np.int64, copy=False)
+        stop_nsyncs = stop_nsyncs.astype(np.int64, copy=False)
 
         if len(start_nsyncs) < 2:
             print("No valid start markers. Phase not calculated!")
@@ -548,7 +662,9 @@ class ImageReconstructor:
         # Paired analysis
         pair_count = min(len(stop_nsyncs), len(start_nsyncs) - 1)
         durations = stop_nsyncs[:pair_count] - start_nsyncs[:pair_count]
-        intervals = start_nsyncs[1:1+pair_count] - start_nsyncs[:pair_count]
+        intervals = (
+            start_nsyncs[1 : 1 + pair_count] - start_nsyncs[:pair_count]
+        )
 
         # Basic sanity check
         if np.any(durations <= 0):

@@ -3,7 +3,7 @@ name = "tttrkit"
 version = "0.1.0"
 description = "Streaming reader and decoder for PicoQuant TTTR files"
 authors = [{name = "Dalibor Panek"}]
-dependencies = ["numpy"]
+dependencies = ["numpy","xarray"]
 
 [build-system]
 requires = ["setuptools", "wheel"]
